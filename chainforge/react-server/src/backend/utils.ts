@@ -147,6 +147,7 @@ function get_environ(key: string): string | undefined {
 }
 
 let OPENAI_API_KEY = get_environ("OPENAI_API_KEY");
+let OPENAI_BASE_URL = get_environ("OPENAI_BASE_URL");
 let ANTHROPIC_API_KEY = get_environ("ANTHROPIC_API_KEY");
 let GOOGLE_PALM_API_KEY = get_environ("PALM_API_KEY");
 let AZURE_OPENAI_KEY = get_environ("AZURE_OPENAI_KEY");
@@ -164,12 +165,15 @@ let AWS_REGION = get_environ("AWS_REGION");
 export function set_api_keys(api_keys: Dict<string>): void {
   function key_is_present(name: string): boolean {
     return (
-      name in api_keys &&
-      api_keys[name] !== undefined &&
-      api_keys[name].trim().length > 0
+      (name in api_keys &&
+        api_keys[name] &&
+        api_keys[name].trim().length > 0) ||
+      name === "OpenAI_BaseURL"
     );
   }
   if (key_is_present("OpenAI")) OPENAI_API_KEY = api_keys.OpenAI;
+  if (key_is_present("OpenAI_BaseURL"))
+    OPENAI_BASE_URL = api_keys.OpenAI_BaseURL;
   if (key_is_present("HuggingFace")) HUGGINGFACE_API_KEY = api_keys.HuggingFace;
   if (key_is_present("Anthropic")) ANTHROPIC_API_KEY = api_keys.Anthropic;
   if (key_is_present("Google")) GOOGLE_PALM_API_KEY = api_keys.Google;
@@ -237,8 +241,11 @@ export async function call_chatgpt(
       "Could not find an OpenAI API key. Double-check that your API key is set in Settings or in your local environment.",
     );
 
+  console.log(OPENAI_BASE_URL);
+
   const configuration = new OpenAIConfig({
     apiKey: OPENAI_API_KEY,
+    basePath: OPENAI_BASE_URL ?? undefined,
   });
 
   // Since we are running client-side, we need to remove the user-agent header:
@@ -539,7 +546,7 @@ export async function call_anthropic(
   // Required non-standard params
   const max_tokens_to_sample = params?.max_tokens_to_sample ?? 1024;
   const stop_sequences = params?.stop_sequences ?? [ANTHROPIC_HUMAN_PROMPT];
-  const system_msg = params?.system_msg;
+  let system_msg = params?.system_msg;
 
   delete params?.custom_prompt_wrapper;
   delete params?.max_tokens_to_sample;
@@ -550,7 +557,7 @@ export async function call_anthropic(
 
   // Carry chat history
   // :: See https://docs.anthropic.com/claude/docs/human-and-assistant-formatting#use-human-and-assistant-to-put-words-in-claudes-mouth
-  const chat_history: ChatHistory | undefined = params?.chat_history;
+  let chat_history: ChatHistory | undefined = params?.chat_history;
   if (chat_history !== undefined) {
     // FOR OLD TEXT COMPLETIONS API ONLY: Carry chat history by prepending it to the prompt
     if (!use_messages_api) {
@@ -564,6 +571,13 @@ export async function call_anthropic(
         anthr_chat_context += " " + chat_msg.content;
       }
       wrapped_prompt = anthr_chat_context + wrapped_prompt; // prepend the chat context
+    } else {
+      // The new messages API doesn't allow a first "system" message inside chat history, like OpenAI does.
+      // We need to detect a "system" message and eject it:
+      if (chat_history.some((m) => m.role === "system")) {
+        system_msg = chat_history.filter((m) => m.role === "system")[0].content;
+        chat_history = chat_history.filter((m) => m.role !== "system");
+      }
     }
 
     // For newer models Claude 2.1 and Claude 3, we carry chat history directly below; no need to do anything else.
