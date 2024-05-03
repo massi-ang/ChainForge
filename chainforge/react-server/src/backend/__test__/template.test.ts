@@ -1,5 +1,6 @@
 import {
   StringTemplate,
+  StringTemplateMustache,
   PromptTemplate,
   PromptPermutationGenerator,
   escapeBraces,
@@ -157,3 +158,5 @@ test("escaped braces", () => {
     "Why is the set \\{0, 1, 2\\} of size 3?",
   );
 });
+
+// TODO: add tests for mustache templates

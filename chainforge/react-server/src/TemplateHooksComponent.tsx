@@ -25,15 +25,17 @@ export const extractBracketedSubstrings = (text: string) => {
   let capture_groups = [];
   for (let i = 0; i < text.length; i += 1) {
     const c = text[i];
-    if (prev_c !== "\\") {
-      // Skipped escaped chars
-      if (group_start_idx === -1 && c === "{") group_start_idx = i;
-      else if (group_start_idx > -1 && c === "}") {
-        if (group_start_idx + 1 < i)
-          // Skip {} empty braces
-          capture_groups.push(text.substring(group_start_idx + 1, i));
-        group_start_idx = -1;
-      }
+    if (prev_c === "{" && group_start_idx === -1 && c === "{")
+      group_start_idx = i;
+
+    if (
+      prev_c === "}" &&
+      c === "}" &&
+      group_start_idx > -1 &&
+      group_start_idx < i - 2
+    ) {
+      capture_groups.push(text.substring(group_start_idx + 1, i - 1));
+      group_start_idx = -1;
     }
     prev_c = c;
   }

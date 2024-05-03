@@ -3,7 +3,8 @@
  */
 import { queryLLM } from "./backend";
 import {
-  StringTemplate,
+  // StringTemplate,
+  StringTemplateMustache,
   escapeBraces,
   containsSameTemplateVariables,
 } from "./template";
@@ -177,7 +178,7 @@ export async function autofill(
   const id = JSON.stringify([input, n]);
   const encoded = encode(input);
   const templateVariables = [
-    ...new Set(new StringTemplate(input.join("\n")).get_vars()),
+    ...new Set(new StringTemplateMustache(input.join("\n")).get_vars()),
   ];
 
   console.log("System message: ", autofillSystemMessage(n, templateVariables));

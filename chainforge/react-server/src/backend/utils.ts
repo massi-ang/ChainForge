@@ -28,7 +28,10 @@ import {
   isImageResponseData,
 } from "./typing";
 import { v4 as uuid } from "uuid";
-import { StringTemplate } from "./template";
+import {
+  // StringTemplate,
+  StringTemplateMustache,
+} from "./template";
 
 /* LLM API SDKs */
 import {
@@ -523,7 +526,9 @@ export async function call_anthropic(
     throw new Error(
       "Custom prompt wrapper is missing required {prompt} template variable.",
     );
-  const prompt_wrapper_template = new StringTemplate(custom_prompt_wrapper);
+  const prompt_wrapper_template = new StringTemplateMustache(
+    custom_prompt_wrapper,
+  );
   let wrapped_prompt = prompt_wrapper_template.safe_substitute({
     prompt,
   });

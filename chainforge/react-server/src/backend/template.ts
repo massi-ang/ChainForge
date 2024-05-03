@@ -30,8 +30,8 @@ export function escapeBraces(str: string): string {
  * Whether s1 and s2 contain the same set of template variables.
  */
 export function containsSameTemplateVariables(s1: string, s2: string): boolean {
-  const vars1 = new Set(new StringTemplate(s1).get_vars());
-  const vars2 = new Set(new StringTemplate(s2).get_vars());
+  const vars1 = new Set(new StringTemplateMustache(s1).get_vars());
+  const vars2 = new Set(new StringTemplateMustache(s2).get_vars());
   return isEqual(vars1, vars2);
 }
 
@@ -174,6 +174,134 @@ export class StringTemplate {
   }
 }
 
+export class StringTemplateMustache {
+  val: string;
+  /**
+   * Javascript's in-built template literals is nowhere as good
+   * as Python's Template in the string library. We need to recreate
+   * Python's Template class here for the below to work.
+   */
+  constructor(str: string) {
+    this.val = str;
+  }
+
+  /** Safely substitutes the template variables 'key' for the passed values,
+   * soft-failing for any keys which were not found.
+   *
+   * NOTE: We don't use Regex here for compatibility of browsers
+   *       that don't support negative lookbehinds/aheads (e.g., Safari).
+   *
+   * This algorithm is O(N) complexity.
+   */
+  safe_substitute(sub_dict: { [key: string]: string }): string {
+    let template = this.val;
+    let prev_c = "";
+    let group_start_idx = -1;
+    for (let i = 0; i < template.length; i += 1) {
+      const c = template.charAt(i);
+      if (prev_c === "{" && group_start_idx === -1 && c === "{") {
+        // Identify the start of a capture {group}
+        group_start_idx = i;
+      }
+      if (prev_c === "}" && group_start_idx > -1 && c === "}") {
+        // Identify the end of a capture {group}
+        if (group_start_idx + 2 < i) {
+          // Ignore {} empty braces
+          // We identified a capture group. First check if its key is in the substitution dict:
+          const varname = template.substring(group_start_idx + 1, i - 1);
+          if (varname in sub_dict) {
+            // Replace '{varname}' with the substitution value:
+            const replacement = sub_dict[varname];
+            let tail = template.substring(i + 1);
+            // Check if the varname is a special settings var (starts with =); if so, look for a newline after it:
+            if (varname.charAt(0) === "=" && /^[ \t]*\n/.test(tail))
+              tail = tail.substring(tail.indexOf("\n") + 1); // remove the whitespace and \n, to vanish the line
+            // Patch the string
+            template =
+              template.substring(0, group_start_idx - 1) + replacement + tail;
+            // Reset the iterator to point to the very next character upon the start of the next loop:
+            i = group_start_idx + replacement.length - 2;
+          }
+          // Because this is safe_substitute, we don't do anything if varname was not in sub_dict.
+        }
+        group_start_idx = -1;
+      }
+      prev_c = c;
+    }
+    return template;
+  }
+
+  /**
+   * Returns true if the template string has:
+   *   - at least one variable {}, if no varnames given
+   *   - has at least one varname in passed varnames
+   */
+  has_vars(varnames?: Array<string>): boolean {
+    const template = this.val;
+    let prev_c = "";
+    let group_start_idx = -1;
+    for (let i = 0; i < template.length; i += 1) {
+      const c = template.charAt(i);
+      if (prev_c === "{" && group_start_idx === -1 && c === "{") {
+        // Identify the start of a capture {group}
+        group_start_idx = i;
+      }
+      if (prev_c === "}" && group_start_idx > -1 && c === "}") {
+        // Identify the end of a capture {group}
+        if (group_start_idx + 2 < i) {
+          // Ignore {} empty braces
+          if (varnames !== undefined) {
+            if (
+              varnames.includes(template.substring(group_start_idx + 1, i - 1))
+            )
+              return true;
+            // If varnames was specified but none matched this capture group, continue.
+          } else {
+            return true; // We identified a capture group.
+          }
+        }
+        group_start_idx = -1;
+      }
+      prev_c = c;
+    }
+    return false;
+  }
+
+  /**
+   * Finds all unfilled variables in the template string.
+   *
+   * For instance, if the string is "The {place} had {food}",
+   * then ["place", "food"] will be returned.
+   */
+  get_vars(): Array<string> {
+    const template = this.val;
+    const varnames: Array<string> = [];
+    let prev_c = "";
+    let group_start_idx = -1;
+    for (let i = 0; i < template.length; i += 1) {
+      const c = template.charAt(i);
+      if (prev_c === "{" && group_start_idx === -1 && c === "{") {
+        // Identify the start of a capture {group}
+        group_start_idx = i;
+      }
+      if (prev_c === "}" && group_start_idx > -1 && c === "}") {
+        // Identify the end of a capture {group}
+        if (group_start_idx + 2 < i)
+          // Ignore {} empty braces
+          varnames.push(template.substring(group_start_idx + 1, i - 1));
+        group_start_idx = -1;
+      }
+
+      prev_c = c;
+    }
+    return varnames;
+  }
+
+  toString(): string {
+    return this.val;
+  }
+}
+
 export class PromptTemplate {
   /**
     Wrapper around string.Template. Use to generate prompts fast.
@@ -205,7 +333,7 @@ export class PromptTemplate {
         */
     try {
       // eslint-disable-next-line
-      new StringTemplate(templateStr);
+      new StringTemplateMustache(templateStr);
     } catch (err) {
       throw new Error(`Invalid template formatting for string: ${templateStr}`);
     }
@@ -226,7 +354,7 @@ export class PromptTemplate {
 
   /** Returns True if the template has a variable with the given name. */
   has_var(varname: string): boolean {
-    return new StringTemplate(this.template).has_vars([varname]);
+    return new StringTemplateMustache(this.template).has_vars([varname]);
   }
 
   /** Returns True if the template has an unfilled variable in its fill_history with the given name,
@@ -234,13 +362,14 @@ export class PromptTemplate {
   has_unfilled_settings_var(varname: string): boolean {
     return Object.entries(this.fill_history).some(
       ([key, val]) =>
-        key.startsWith("=") && new StringTemplate(val).has_vars([varname]),
+        key.startsWith("=") &&
+        new StringTemplateMustache(val).has_vars([varname]),
     );
   }
 
   /** Returns True if no template variables are left in template string. */
   is_concrete(): boolean {
-    return !new StringTemplate(this.template).has_vars();
+    return !new StringTemplateMustache(this.template).has_vars();
   }
 
   /** 
@@ -295,7 +424,9 @@ export class PromptTemplate {
 
     // Perform the fill on the main text
     const filled_pt = new PromptTemplate(
-      new StringTemplate(this.template).safe_substitute(params_wo_settings),
+      new StringTemplateMustache(this.template).safe_substitute(
+        params_wo_settings,
+      ),
     );
 
     // Deep copy prior fill history of this PromptTemplate from this version over to new one
@@ -305,9 +436,9 @@ export class PromptTemplate {
     // Perform the fill inside any and all 'settings' template vars
     Object.entries(filled_pt.fill_history).forEach(([key, val]) => {
       if (!key.startsWith("=")) return;
-      filled_pt.fill_history[key] = new StringTemplate(val).safe_substitute(
-        params_wo_settings,
-      );
+      filled_pt.fill_history[key] = new StringTemplateMustache(
+        val,
+      ).safe_substitute(params_wo_settings);
     });
 
     // Append any past history passed as vars:
@@ -344,7 +475,7 @@ export class PromptTemplate {
   fill_special_vars(fill_history: { [key: string]: any }): void {
     // Special variables {#...} denotes filling a variable from a matching var in fill_history or metavars.
     // Find any special variables:
-    const unfilled_vars = new StringTemplate(this.template).get_vars();
+    const unfilled_vars = new StringTemplateMustache(this.template).get_vars();
     const special_vars_to_fill: { [key: string]: string } = {};
     for (const v of unfilled_vars) {
       if (v.length > 0 && v[0] === "#") {
@@ -359,7 +490,7 @@ export class PromptTemplate {
     }
     // Fill any special variables, using the fill history of the template in question:
     if (Object.keys(special_vars_to_fill).length > 0)
-      this.template = new StringTemplate(this.template).safe_substitute(
+      this.template = new StringTemplateMustache(this.template).safe_substitute(
         special_vars_to_fill,
       );
   }
@@ -396,8 +527,7 @@ export class PromptPermutationGenerator {
     // Extract the first param that occurs in the current template
     let param: string | undefined;
     let params_left: Array<string> = params_to_fill;
-    for (let i = 0; i < params_to_fill.length; i++) {
-      const p = params_to_fill[i];
+    for (const p of params_to_fill) {
       if (template.has_var(p) || template.has_unfilled_settings_var(p)) {
         param = p;
         params_left = params_to_fill.filter((_p) => _p !== p);
@@ -409,7 +539,6 @@ export class PromptPermutationGenerator {
       yield template;
       return true;
     }
-
     // Generate new prompts by filling in its value(s) into the PromptTemplate
     const val = paramDict[param];
     let new_prompt_temps: Array<PromptTemplate> = [];
@@ -488,6 +617,7 @@ export class PromptPermutationGenerator {
       Object.keys(paramDict),
       paramDict,
     )) {
+      console.log("p", p);
       p.fill_special_vars({ ...p.fill_history, ...p.metavars });
 
       // Yield the final prompt template
